@@ -78,34 +78,32 @@ const bankoSounds={
  hit:new Audio('bulls_bears_hits.wav')
 };
 Object.values(bankoSounds).forEach(a=>{a.preload='auto';a.volume=.65});
-let bankoAudioContext=null;
+let bankoActiveSound=null;
+let bankoSoundGeneration=0;
 function bankoStopSounds(){
+ bankoSoundGeneration++;
  Object.values(bankoSounds).forEach(a=>{try{a.pause();a.currentTime=0}catch{}});
-}
-function bankoInstantSound(kind){
- try{
-  const AC=window.AudioContext||window.webkitAudioContext;
-  if(!AC)return;
-  if(!bankoAudioContext)bankoAudioContext=new AC();
-  if(bankoAudioContext.state==='suspended')bankoAudioContext.resume().catch(()=>{});
-  const ctx=bankoAudioContext,t=ctx.currentTime;
-  const osc=ctx.createOscillator(),gain=ctx.createGain();
-  osc.type=kind==='pop'?'sine':'triangle';
-  const start=kind==='pop'?570:165,end=kind==='pop'?145:62,duration=kind==='pop'?.105:.135;
-  osc.frequency.setValueAtTime(start,t);
-  osc.frequency.exponentialRampToValueAtTime(end,t+duration);
-  gain.gain.setValueAtTime(.0001,t);
-  gain.gain.exponentialRampToValueAtTime(kind==='pop'?.24:.38,t+.006);
-  gain.gain.exponentialRampToValueAtTime(.0001,t+duration);
-  osc.connect(gain);gain.connect(ctx.destination);
-  osc.start(t);osc.stop(t+duration+.01);
- }catch{}
+ bankoActiveSound=null;
 }
 function bankoPlaySound(name){
  if(!bankoSoundOn)return;
- if(name==='pop'||name==='hit'){bankoInstantSound(name);return}
+ const allowed={slots:['spin','win'],game:['pop'],mole:['hit']};
+ if(!allowed[urgeStage]||!allowed[urgeStage].includes(name))return;
  const a=bankoSounds[name];if(!a)return;
- try{a.pause();a.currentTime=0;const p=a.play();if(p&&p.catch)p.catch(()=>{})}catch{}
+ if(bankoActiveSound&&bankoActiveSound!==a){try{bankoActiveSound.pause();bankoActiveSound.currentTime=0}catch{}}
+ bankoActiveSound=a;
+ try{
+  a.pause();a.currentTime=0;
+  // Short, immediate per-tap segments for bubble and hit; prevent multi-effect playback.
+  if(name==='pop'||name==='hit'){
+   const generation=++bankoSoundGeneration;
+   const limit=name==='pop'?.12:.17;
+   const stop=()=>{if(generation!==bankoSoundGeneration||bankoActiveSound!==a)return;if(a.currentTime>=limit){a.pause();a.currentTime=0;a.removeEventListener('timeupdate',stop)}};
+   a.addEventListener('timeupdate',stop);
+   setTimeout(()=>{if(generation===bankoSoundGeneration&&bankoActiveSound===a){a.pause();a.currentTime=0}a.removeEventListener('timeupdate',stop)},Math.ceil(limit*1000));
+  }
+  const p=a.play();if(p&&p.catch)p.catch(()=>{});
+ }catch{}
 }
 function bankoUpdateSoundButtons(){
  document.querySelectorAll('.banko-sound-toggle').forEach(b=>{
