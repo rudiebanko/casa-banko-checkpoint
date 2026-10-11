@@ -54,7 +54,7 @@ document.addEventListener('keydown',e=>{if($('og-modal').hidden)return;if(e.key=
 const URGE_KEY='banko_personal_urge_resets_v1';let urgeBefore=5,urgeReason='',urgeStage='questions',urgeSelectedGame='bubble',urgeGameType='';
 function urgeRead(){try{const data=JSON.parse(localStorage.getItem(URGE_KEY)||'[]');return Array.isArray(data)?data:[]}catch{return []}}
 function urgeHistory(){const items=urgeRead();$('urge-history').innerHTML=items.length?items.slice(0,30).map(x=>'<div class="urge-history-item"><strong>'+escapeLog(new Date(x.date).toLocaleString())+'</strong><div>'+escapeLog(x.reason)+' · '+x.before+'/10 → '+x.after+'/10'+(x.played?' · '+escapeLog(x.game||'Bubble Break'):' · Game skipped')+'</div></div>').join(''):'<p class="log-small">No resets saved yet.</p>'}
-function urgeShowStage(stage){bankoStopSounds();urgeStage=stage;if(stage==='game'||stage==='mole')bankoPrepareEffects();$('urge-questions').hidden=stage!=='questions';$('urge-game').hidden=stage!=='game';$('urge-select').hidden=stage!=='select';$('urge-mole').hidden=stage!=='mole';$('urge-slots').hidden=stage!=='slots';if(stage!=='mole')urgeStopMole();if(stage!=='slots')urgeStopSlots();$('urge-after-panel').hidden=stage!=='after';if(stage==='game')urgeBubbles();if(stage==='mole')urgeStartMole();if(stage==='slots')urgeStartSlots();if(stage==='after'){$('urge-after').value=urgeBefore;$('urge-after-value').textContent=urgeBefore+'/10';urgeSummary()}}
+function urgeShowStage(stage){bankoStopSounds();urgeStage=stage;$('urge-questions').hidden=stage!=='questions';$('urge-game').hidden=stage!=='game';$('urge-select').hidden=stage!=='select';$('urge-mole').hidden=stage!=='mole';$('urge-slots').hidden=stage!=='slots';if(stage!=='mole')urgeStopMole();if(stage!=='slots')urgeStopSlots();$('urge-after-panel').hidden=stage!=='after';if(stage==='game')urgeBubbles();if(stage==='mole')urgeStartMole();if(stage==='slots')urgeStartSlots();if(stage==='after'){$('urge-after').value=urgeBefore;$('urge-after-value').textContent=urgeBefore+'/10';urgeSummary()}}
 function urgeSummary(){$('urge-summary').textContent='Before: '+urgeBefore+'/10 → After: '+$('urge-after').value+'/10'}
 function showUrge(){page='urge';urgeHistory();sync();window.scrollTo({top:0,behavior:'instant'})}
 
@@ -82,73 +82,65 @@ Object.values(bankoSounds).forEach(a=>{a.preload='auto';a.volume=.65});
 // Their samples start at time zero, with no leading silence or delayed multi-pop clip.
 // Keep the already approved Slots audio untouched. Prepare hit/pop buffers once,
 // then start a fresh in-memory source directly on each valid tap (no HTMLAudio seek).
-const bankoEffectFallback={pop:bankoSounds.pop,hit:bankoSounds.hit};
-let bankoEffectContext=null,bankoEffectBuffers=null,bankoEffectSources=[];
-function bankoMakeEffect(ctx,kind){
- const rate=ctx.sampleRate,duration=kind==='pop'?.105:.145;
- const n=Math.ceil(rate*duration),buf=ctx.createBuffer(1,n,rate),samples=buf.getChannelData(0);
- // Pop: fast, airy membrane snap with a tiny watery tail, not a pitched arcade beep.
- // Hit: immediate sharp attack plus low, short thud.
- let lp=0;
- for(let i=0;i<n;i++){
-  const t=i/rate,x=i/n,noise=Math.random()*2-1;
-  lp=lp*.78+noise*.22;
-  let value;
+// Single audio engine: HTMLAudio for all games, including iPhone home-screen use.
+// Build tiny, self-contained PCM WAV effects once. No AudioContext or runtime synthesis.
+function bankoCreateEffectWav(kind){
+ const rate=32000,duration=kind==='pop'?.125:.18,n=Math.floor(rate*duration);
+ const data=new ArrayBuffer(44+n*2),v=new DataView(data);
+ const ascii=(offset,value)=>{for(let i=0;i<value.length;i++)v.setUint8(offset+i,value.charCodeAt(i))};
+ ascii(0,'RIFF');v.setUint32(4,36+n*2,true);ascii(8,'WAVE');ascii(12,'fmt ');
+ v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+ v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);v.setUint16(32,2,true);
+ v.setUint16(34,16,true);ascii(36,'data');v.setUint32(40,n*2,true);
+ let smooth=0;
+ for(let k=0;k<n;k++){
+  const t=k/rate,noise=Math.random()*2-1;
+  smooth=smooth*.85+noise*.15;
+  let y;
   if(kind==='pop'){
-   const snap=noise*Math.exp(-t*115)*.74;
-   const air=(noise-lp)*Math.exp(-t*43)*.32;
-   const wet=Math.sin(2*Math.PI*(270*t-90*t*t))*Math.exp(-t*52)*.19;
-   value=(snap+air+wet)*Math.min(1,t*6000);
+   // Dry bubble-membrane snap, small air release and liquid click.
+   const snap=(noise-smooth)*Math.exp(-t*110)*.82;
+   const air=noise*Math.exp(-t*36)*.16;
+   const droplet=Math.sin(2*Math.PI*(380*t-220*t*t))*Math.exp(-t*55)*.17;
+   y=(snap+air+droplet)*Math.min(1,t*7000);
   }else{
-   const crack=noise*Math.exp(-t*105)*.63;
-   const thud=Math.sin(2*Math.PI*(118*t-170*t*t))*Math.exp(-t*25)*.62;
-   value=(crack+thud)*Math.min(1,t*9000);
+   // Whack: sharp contact click immediately followed by short bass impact.
+   const crack=noise*Math.exp(-t*145)*.6;
+   const thump=Math.sin(2*Math.PI*(155*t-190*t*t))*Math.exp(-t*28)*.72;
+   y=(crack+thump)*Math.min(1,t*9000);
   }
-  samples[i]=Math.max(-1,Math.min(1,value));
+  v.setInt16(44+k*2,Math.round(Math.max(-1,Math.min(1,y))*32767),true);
  }
- return buf;
+ return URL.createObjectURL(new Blob([data],{type:'audio/wav'}));
 }
-function bankoPrepareEffects(){
- try{
-  const AC=window.AudioContext||window.webkitAudioContext;
-  if(!AC)return;
-  if(!bankoEffectContext){
-   bankoEffectContext=new AC({latencyHint:'interactive'});
-   bankoEffectBuffers={pop:bankoMakeEffect(bankoEffectContext,'pop'),hit:bankoMakeEffect(bankoEffectContext,'hit')};
-  }
-  if(bankoEffectContext.state!=='running'){
-   const p=bankoEffectContext.resume();if(p&&p.catch)p.catch(()=>{});
-  }
- }catch{}
+const bankoEffectUrls={pop:bankoCreateEffectWav('pop'),hit:bankoCreateEffectWav('hit')};
+const bankoEffectPools={pop:[],hit:[]};
+for(const name of ['pop','hit']){
+ for(let k=0;k<3;k++){
+  const a=new Audio(bankoEffectUrls[name]);
+  a.preload='auto';a.volume=name==='pop'?.9:.9;
+  a.load();bankoEffectPools[name].push(a);
+ }
 }
+const bankoEffectIndex={pop:0,hit:0};
 function bankoStopSounds(){
- bankoEffectSources.forEach(source=>{try{source.stop()}catch{}});
- bankoEffectSources=[];
  Object.values(bankoSounds).forEach(a=>{try{a.pause();a.currentTime=0}catch{}});
+ Object.values(bankoEffectPools).flat().forEach(a=>{try{a.pause();a.currentTime=0}catch{}});
 }
 function bankoPlaySound(name){
  if(!bankoSoundOn)return;
  const allowed={slots:['spin','win'],game:['pop'],mole:['hit']};
  if(!allowed[urgeStage]||!allowed[urgeStage].includes(name))return;
  if(name==='pop'||name==='hit'){
-  bankoPrepareEffects();
-  if(bankoEffectContext&&bankoEffectBuffers&&bankoEffectContext.state==='running'){
-   try{
-    const src=bankoEffectContext.createBufferSource(),gain=bankoEffectContext.createGain();
-    src.buffer=bankoEffectBuffers[name];gain.gain.value=name==='pop'?.9:.85;
-    src.connect(gain);gain.connect(bankoEffectContext.destination);
-    bankoEffectSources.push(src);
-    src.onended=()=>{bankoEffectSources=bankoEffectSources.filter(x=>x!==src)};
-    src.start(0);return;
-   }catch{}
-  }
-  // iOS fallback if the Web Audio context is unavailable.
-  const a=bankoEffectFallback[name];
-  try{a.pause();a.currentTime=0;const p=a.play();if(p&&p.catch)p.catch(()=>{})}catch{}
+  const pool=bankoEffectPools[name],a=pool[bankoEffectIndex[name]++%pool.length];
+  try{
+   a.pause();a.currentTime=0;
+   const play=a.play();if(play&&play.catch)play.catch(()=>{});
+  }catch{}
   return;
  }
  const a=bankoSounds[name];if(!a)return;
- try{a.pause();a.currentTime=0;const p=a.play();if(p&&p.catch)p.catch(()=>{})}catch{}
+ try{a.pause();a.currentTime=0;const play=a.play();if(play&&play.catch)play.catch(()=>{})}catch{}
 }
 function bankoUpdateSoundButtons(){
  document.querySelectorAll('.banko-sound-toggle').forEach(b=>{
