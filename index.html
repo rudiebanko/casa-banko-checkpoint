@@ -78,10 +78,32 @@ const bankoSounds={
  hit:new Audio('bulls_bears_hits.wav')
 };
 Object.values(bankoSounds).forEach(a=>{a.preload='auto';a.volume=.65});
+// One-shot WAVs use the same HTML audio playback path as the working Slots game.
+// Their samples start at time zero, with no leading silence or delayed multi-pop clip.
+function bankoOneShotWav(kind){
+ const rate=22050,duration=kind==='pop'?.115:.155,n=Math.floor(rate*duration);
+ const bytes=new ArrayBuffer(44+n*2),v=new DataView(bytes);
+ const write=(p,str)=>{for(let i=0;i<str.length;i++)v.setUint8(p+i,str.charCodeAt(i))};
+ write(0,'RIFF');v.setUint32(4,36+n*2,true);write(8,'WAVE');write(12,'fmt ');
+ v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+ v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);v.setUint16(32,2,true);
+ v.setUint16(34,16,true);write(36,'data');v.setUint32(40,n*2,true);
+ for(let i=0;i<n;i++){
+  const t=i/rate,x=i/n;
+  const f=kind==='pop'?680-460*x:190-125*x;
+  const envelope=Math.pow(1-x,kind==='pop'?2.7:1.7);
+  const tone=Math.sin(2*Math.PI*(f*t+(kind==='pop'?40:12)*t*t));
+  const click=(Math.random()*2-1)*Math.exp(-t*110)*(kind==='pop'?.24:.48);
+  const sample=Math.max(-1,Math.min(1,(tone*.72+click)*envelope*.8));
+  v.setInt16(44+i*2,Math.round(sample*32767),true);
+ }
+ return URL.createObjectURL(new Blob([bytes],{type:'audio/wav'}));
+}
+bankoSounds.pop.src=bankoOneShotWav('pop');
+bankoSounds.hit.src=bankoOneShotWav('hit');
+bankoSounds.pop.load();bankoSounds.hit.load();
 let bankoActiveSound=null;
-let bankoSoundGeneration=0;
 function bankoStopSounds(){
- bankoSoundGeneration++;
  Object.values(bankoSounds).forEach(a=>{try{a.pause();a.currentTime=0}catch{}});
  bankoActiveSound=null;
 }
@@ -90,20 +112,11 @@ function bankoPlaySound(name){
  const allowed={slots:['spin','win'],game:['pop'],mole:['hit']};
  if(!allowed[urgeStage]||!allowed[urgeStage].includes(name))return;
  const a=bankoSounds[name];if(!a)return;
- if(bankoActiveSound&&bankoActiveSound!==a){try{bankoActiveSound.pause();bankoActiveSound.currentTime=0}catch{}}
+ if(bankoActiveSound&&bankoActiveSound!==a){
+  try{bankoActiveSound.pause();bankoActiveSound.currentTime=0}catch{}
+ }
  bankoActiveSound=a;
- try{
-  a.pause();a.currentTime=0;
-  // Short, immediate per-tap segments for bubble and hit; prevent multi-effect playback.
-  if(name==='pop'||name==='hit'){
-   const generation=++bankoSoundGeneration;
-   const limit=name==='pop'?.12:.17;
-   const stop=()=>{if(generation!==bankoSoundGeneration||bankoActiveSound!==a)return;if(a.currentTime>=limit){a.pause();a.currentTime=0;a.removeEventListener('timeupdate',stop)}};
-   a.addEventListener('timeupdate',stop);
-   setTimeout(()=>{if(generation===bankoSoundGeneration&&bankoActiveSound===a){a.pause();a.currentTime=0}a.removeEventListener('timeupdate',stop)},Math.ceil(limit*1000));
-  }
-  const p=a.play();if(p&&p.catch)p.catch(()=>{});
- }catch{}
+ try{a.pause();a.currentTime=0;const p=a.play();if(p&&p.catch)p.catch(()=>{})}catch{}
 }
 function bankoUpdateSoundButtons(){
  document.querySelectorAll('.banko-sound-toggle').forEach(b=>{
