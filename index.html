@@ -54,7 +54,7 @@ document.addEventListener('keydown',e=>{if($('og-modal').hidden)return;if(e.key=
 const URGE_KEY='banko_personal_urge_resets_v1';let urgeBefore=5,urgeReason='',urgeStage='questions',urgeSelectedGame='bubble',urgeGameType='';
 function urgeRead(){try{const data=JSON.parse(localStorage.getItem(URGE_KEY)||'[]');return Array.isArray(data)?data:[]}catch{return []}}
 function urgeHistory(){const items=urgeRead();$('urge-history').innerHTML=items.length?items.slice(0,30).map(x=>'<div class="urge-history-item"><strong>'+escapeLog(new Date(x.date).toLocaleString())+'</strong><div>'+escapeLog(x.reason)+' · '+x.before+'/10 → '+x.after+'/10'+(x.played?' · '+escapeLog(x.game||'Bubble Break'):' · Game skipped')+'</div></div>').join(''):'<p class="log-small">No resets saved yet.</p>'}
-function urgeShowStage(stage){urgeStage=stage;$('urge-questions').hidden=stage!=='questions';$('urge-game').hidden=stage!=='game';$('urge-select').hidden=stage!=='select';$('urge-mole').hidden=stage!=='mole';$('urge-slots').hidden=stage!=='slots';if(stage!=='mole')urgeStopMole();if(stage!=='slots')urgeStopSlots();$('urge-after-panel').hidden=stage!=='after';if(stage==='game')urgeBubbles();if(stage==='mole')urgeStartMole();if(stage==='slots')urgeStartSlots();if(stage==='after'){$('urge-after').value=urgeBefore;$('urge-after-value').textContent=urgeBefore+'/10';urgeSummary()}}
+function urgeShowStage(stage){bankoStopSounds();urgeStage=stage;$('urge-questions').hidden=stage!=='questions';$('urge-game').hidden=stage!=='game';$('urge-select').hidden=stage!=='select';$('urge-mole').hidden=stage!=='mole';$('urge-slots').hidden=stage!=='slots';if(stage!=='mole')urgeStopMole();if(stage!=='slots')urgeStopSlots();$('urge-after-panel').hidden=stage!=='after';if(stage==='game')urgeBubbles();if(stage==='mole')urgeStartMole();if(stage==='slots')urgeStartSlots();if(stage==='after'){$('urge-after').value=urgeBefore;$('urge-after-value').textContent=urgeBefore+'/10';urgeSummary()}}
 function urgeSummary(){$('urge-summary').textContent='Before: '+urgeBefore+'/10 → After: '+$('urge-after').value+'/10'}
 function showUrge(){page='urge';urgeHistory();sync();window.scrollTo({top:0,behavior:'instant'})}
 
@@ -78,8 +78,32 @@ const bankoSounds={
  hit:new Audio('bulls_bears_hits.wav')
 };
 Object.values(bankoSounds).forEach(a=>{a.preload='auto';a.volume=.65});
+let bankoAudioContext=null;
+function bankoStopSounds(){
+ Object.values(bankoSounds).forEach(a=>{try{a.pause();a.currentTime=0}catch{}});
+}
+function bankoInstantSound(kind){
+ try{
+  const AC=window.AudioContext||window.webkitAudioContext;
+  if(!AC)return;
+  if(!bankoAudioContext)bankoAudioContext=new AC();
+  if(bankoAudioContext.state==='suspended')bankoAudioContext.resume().catch(()=>{});
+  const ctx=bankoAudioContext,t=ctx.currentTime;
+  const osc=ctx.createOscillator(),gain=ctx.createGain();
+  osc.type=kind==='pop'?'sine':'triangle';
+  const start=kind==='pop'?570:165,end=kind==='pop'?145:62,duration=kind==='pop'?.105:.135;
+  osc.frequency.setValueAtTime(start,t);
+  osc.frequency.exponentialRampToValueAtTime(end,t+duration);
+  gain.gain.setValueAtTime(.0001,t);
+  gain.gain.exponentialRampToValueAtTime(kind==='pop'?.24:.38,t+.006);
+  gain.gain.exponentialRampToValueAtTime(.0001,t+duration);
+  osc.connect(gain);gain.connect(ctx.destination);
+  osc.start(t);osc.stop(t+duration+.01);
+ }catch{}
+}
 function bankoPlaySound(name){
  if(!bankoSoundOn)return;
+ if(name==='pop'||name==='hit'){bankoInstantSound(name);return}
  const a=bankoSounds[name];if(!a)return;
  try{a.pause();a.currentTime=0;const p=a.play();if(p&&p.catch)p.catch(()=>{})}catch{}
 }
@@ -94,7 +118,7 @@ function bankoUpdateSoundButtons(){
  const button=document.createElement('button');
  button.type='button';button.className='banko-sound-toggle';
  button.style.cssText='display:block;margin:0 0 12px auto;padding:8px 14px;border:1px solid #b88d38;border-radius:20px;background:#241b0d;color:#f6d478;font-weight:800;cursor:pointer;font-size:12px';
- button.onclick=()=>{bankoSoundOn=!bankoSoundOn;try{localStorage.setItem(BANKO_SOUND_KEY,bankoSoundOn?'on':'off')}catch{};if(!bankoSoundOn)Object.values(bankoSounds).forEach(a=>a.pause());bankoUpdateSoundButtons()};
+ button.onclick=()=>{bankoSoundOn=!bankoSoundOn;try{localStorage.setItem(BANKO_SOUND_KEY,bankoSoundOn?'on':'off')}catch{};if(!bankoSoundOn)bankoStopSounds();bankoUpdateSoundButtons()};
  panel.prepend(button);
 });
 bankoUpdateSoundButtons();
